@@ -8,15 +8,25 @@ import {
   Fab,
   Tabs,
   Tab,
-  Grid
+  Grid,
+  Button,
+  Avatar,
+  Menu,
+  MenuItem,
+  IconButton,
+  Alert
 } from '@mui/material';
 import {
   Add as AddIcon,
   CalendarToday,
   List,
   Dashboard,
-  AccessTime
+  AccessTime,
+  AccountCircle,
+  Logout,
+  Settings
 } from '@mui/icons-material';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { TaskProvider, useTaskContext } from './contexts/TaskContext';
 import TaskForm from './components/TaskForm';
 import TaskList from './components/TaskList';
@@ -24,6 +34,7 @@ import TaskFilter from './components/TaskFilter';
 import TaskStatsComponent from './components/TaskStats';
 import Calendar from './components/Calendar';
 import TimeTracker from './components/TimeTracker';
+import LoginForm from './components/auth/LoginForm';
 import type { Task } from './types';
 
 interface TabPanelProps {
@@ -46,10 +57,25 @@ const TabPanel: React.FC<TabPanelProps> = ({ children, value, index }) => {
 };
 
 const AppContent: React.FC = () => {
+  const { state: authState, logout } = useAuth();
   const [currentTab, setCurrentTab] = useState(0);
   const [taskFormOpen, setTaskFormOpen] = useState(false);
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
+  const [userMenuAnchor, setUserMenuAnchor] = useState<null | HTMLElement>(null);
+
+  const handleUserMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setUserMenuAnchor(event.currentTarget);
+  };
+
+  const handleUserMenuClose = () => {
+    setUserMenuAnchor(null);
+  };
+
+  const handleLogout = () => {
+    logout();
+    handleUserMenuClose();
+  };
 
   const {
     state,
@@ -116,17 +142,64 @@ const AppContent: React.FC = () => {
       )
     : state.tasks;
 
+  // 如果用户未登录，显示登录界面
+  if (!authState.isAuthenticated) {
+    return (
+      <Box
+        sx={{
+          minHeight: '100vh',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          background: 'linear-gradient(135deg, #667eea 0%, #764ba2 100%)',
+          p: 2
+        }}
+      >
+        <LoginForm />
+      </Box>
+    );
+  }
+
   return (
     <Box sx={{ flexGrow: 1 }}>
       {/* 应用栏 */}
       <AppBar position="static" sx={{ mb: 3 }}>
         <Toolbar>
           <Typography variant="h6" component="div" sx={{ flexGrow: 1 }}>
-            个人任务管理器
+            多人任务管理器
           </Typography>
-          <Typography variant="body2">
+          <Typography variant="body2" sx={{ mr: 2 }}>
             总任务: {stats.total} | 今日完成: {stats.completedToday}
           </Typography>
+          <IconButton
+            color="inherit"
+            onClick={handleUserMenuOpen}
+            sx={{ ml: 1 }}
+          >
+            <Avatar
+              src={authState.user?.avatar}
+              sx={{ width: 32, height: 32 }}
+            >
+              {authState.user?.displayName.charAt(0).toUpperCase()}
+            </Avatar>
+          </IconButton>
+          <Menu
+            anchorEl={userMenuAnchor}
+            open={Boolean(userMenuAnchor)}
+            onClose={handleUserMenuClose}
+          >
+            <MenuItem disabled>
+              <Typography variant="body2">
+                {authState.user?.displayName} (@{authState.user?.username})
+              </Typography>
+            </MenuItem>
+            <MenuItem>
+              <Settings sx={{ mr: 1 }} /> 设置
+            </MenuItem>
+            <MenuItem onClick={handleLogout}>
+              <Logout sx={{ mr: 1 }} /> 退出登录
+            </MenuItem>
+          </Menu>
         </Toolbar>
       </AppBar>
 
@@ -278,9 +351,11 @@ const AppContent: React.FC = () => {
 
 function App() {
   return (
-    <TaskProvider>
-      <AppContent />
-    </TaskProvider>
+    <AuthProvider>
+      <TaskProvider>
+        <AppContent />
+      </TaskProvider>
+    </AuthProvider>
   );
 }
 

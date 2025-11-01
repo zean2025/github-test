@@ -13,15 +13,19 @@ import {
   Box,
   Chip,
   Typography,
-  IconButton
+  IconButton,
+  Grid,
+  Divider
 } from '@mui/material';
-import { Add as AddIcon, Delete as DeleteIcon } from '@mui/icons-material';
+import { Add as AddIcon, Delete as DeleteIcon, Group, Visibility } from '@mui/icons-material';
 import { DatePicker } from '@mui/x-date-pickers/DatePicker';
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider';
 import { AdapterDateFns } from '@mui/x-date-pickers/AdapterDateFns';
 import { zhCN } from 'date-fns/locale';
 import type { Task } from '../types';
-import { TaskStatus, TaskPriority } from '../types';
+import { TaskStatus, TaskPriority, TaskVisibility } from '../types';
+import { useAuth } from '../contexts/AuthContext';
+import UserSelector from './UserSelector';
 
 interface TaskFormProps {
   open: boolean;
@@ -31,6 +35,7 @@ interface TaskFormProps {
 }
 
 const TaskForm: React.FC<TaskFormProps> = ({ open, task, onClose, onSubmit }) => {
+  const { state: authState } = useAuth();
   const [formData, setFormData] = useState({
     title: '',
     description: '',
@@ -39,7 +44,11 @@ const TaskForm: React.FC<TaskFormProps> = ({ open, task, onClose, onSubmit }) =>
     dueDate: null as Date | null,
     estimatedTime: '',
     tags: [] as string[],
-    newTag: ''
+    newTag: '',
+    // 多人协作字段
+    assignedTo: [] as string[],
+    visibility: TaskVisibility.PUBLIC,
+    watchers: [] as string[]
   });
 
   useEffect(() => {
@@ -52,7 +61,11 @@ const TaskForm: React.FC<TaskFormProps> = ({ open, task, onClose, onSubmit }) =>
         dueDate: task.dueDate || null,
         estimatedTime: task.estimatedTime ? task.estimatedTime.toString() : '',
         tags: task.tags,
-        newTag: ''
+        newTag: '',
+        // 多人协作字段
+        assignedTo: task.assignedTo || [],
+        visibility: task.visibility,
+        watchers: task.watchers || []
       });
     } else {
       setFormData({
@@ -63,7 +76,11 @@ const TaskForm: React.FC<TaskFormProps> = ({ open, task, onClose, onSubmit }) =>
         dueDate: null,
         estimatedTime: '',
         tags: [],
-        newTag: ''
+        newTag: '',
+        // 多人协作字段
+        assignedTo: [],
+        visibility: TaskVisibility.PUBLIC,
+        watchers: []
       });
     }
   }, [task, open]);
@@ -101,6 +118,11 @@ const TaskForm: React.FC<TaskFormProps> = ({ open, task, onClose, onSubmit }) =>
       return;
     }
 
+    if (!authState.user) {
+      alert('用户未登录');
+      return;
+    }
+
     const taskData = {
       title: formData.title.trim(),
       description: formData.description.trim(),
@@ -108,7 +130,16 @@ const TaskForm: React.FC<TaskFormProps> = ({ open, task, onClose, onSubmit }) =>
       priority: formData.priority,
       dueDate: formData.dueDate,
       estimatedTime: formData.estimatedTime ? parseInt(formData.estimatedTime) : undefined,
-      tags: formData.tags
+      tags: formData.tags,
+      // 多人协作字段
+      createdBy: authState.user.id,
+      assignedTo: formData.assignedTo,
+      visibility: formData.visibility,
+      watchers: formData.watchers.includes(authState.user.id)
+        ? formData.watchers
+        : [...formData.watchers, authState.user.id], // 创建者自动关注任务
+      attachments: [],
+      comments: []
     };
 
     onSubmit(taskData);
@@ -116,7 +147,7 @@ const TaskForm: React.FC<TaskFormProps> = ({ open, task, onClose, onSubmit }) =>
   };
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="sm" fullWidth>
+    <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>{task ? '编辑任务' : '新建任务'}</DialogTitle>
       <DialogContent>
         <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 2 }}>
@@ -221,6 +252,53 @@ const TaskForm: React.FC<TaskFormProps> = ({ open, task, onClose, onSubmit }) =>
               </IconButton>
             </Box>
           </Box>
+
+          {/* 多人协作字段 */}
+          <Divider sx={{ my: 2 }} />
+          <Typography variant="h6" sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Group />
+            协作设置
+          </Typography>
+
+          <Grid container spacing={2}>
+            <Grid item xs={12} md={6}>
+              <UserSelector
+                selectedUsers={formData.assignedTo}
+                onSelectionChange={(userIds) => setFormData(prev => ({ ...prev, assignedTo: userIds }))}
+                label="分配给"
+                placeholder="选择分配给的用户"
+              />
+            </Grid>
+
+            <Grid item xs={12} md={6}>
+              <FormControl fullWidth>
+                <InputLabel>可见性</InputLabel>
+                <Select
+                  name="visibility"
+                  value={formData.visibility}
+                  onChange={handleChange}
+                  label="可见性"
+                  startAdornment={
+                    <Box sx={{ display: 'flex', alignItems: 'center', mr: 1 }}>
+                      <Visibility fontSize="small" />
+                    </Box>
+                  }
+                >
+                  <MenuItem value={TaskVisibility.PUBLIC}>公开 - 所有成员可见</MenuItem>
+                  <MenuItem value={TaskVisibility.ASSIGNED}>分配成员 - 仅分配对象可见</MenuItem>
+                  <MenuItem value={TaskVisibility.PRIVATE}>私有 - 仅自己可见</MenuItem>
+                </Select>
+              </FormControl>
+            </Grid>
+          </Grid>
+
+          <UserSelector
+            selectedUsers={formData.watchers}
+            onSelectionChange={(userIds) => setFormData(prev => ({ ...prev, watchers: userIds }))}
+            label="关注者"
+            placeholder="选择关注此任务的用户"
+            multiple={true}
+          />
         </Box>
       </DialogContent>
       <DialogActions>

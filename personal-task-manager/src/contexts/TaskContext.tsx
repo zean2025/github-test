@@ -1,8 +1,9 @@
-import React, { createContext, useContext, useReducer } from 'react';
+import React, { createContext, useContext, useReducer, useEffect } from 'react';
 import type { ReactNode } from 'react';
 import type { Task, TaskFilter, TaskStats } from '../types';
 import { TaskStatus, TaskPriority } from '../types';
-import { storageService } from '../services/storageService';
+import { taskService, teamService } from '../services/mockApi';
+import { useAuth } from './AuthContext';
 import { generateId } from '../utils/taskUtils';
 
 interface TaskState {
@@ -17,7 +18,9 @@ type TaskAction =
   | { type: 'UPDATE_TASK'; payload: Task }
   | { type: 'DELETE_TASK'; payload: string }
   | { type: 'SET_FILTER'; payload: TaskFilter }
-  | { type: 'SET_SELECTED_TASK'; payload: Task | null };
+  | { type: 'SET_SELECTED_TASK'; payload: Task | null }
+  | { type: 'SET_LOADING'; payload: boolean }
+  | { type: 'SET_ERROR'; payload: string | null };
 
 const initialState: TaskState = {
   tasks: [],
@@ -37,13 +40,11 @@ const taskReducer = (state: TaskState, action: TaskAction): TaskState => {
         createdAt: new Date(),
         updatedAt: new Date()
       };
-      storageService.addTask(newTask);
       return { ...state, tasks: [...state.tasks, newTask] };
     }
 
     case 'UPDATE_TASK': {
       const updatedTask = { ...action.payload, updatedAt: new Date() };
-      storageService.updateTask(updatedTask);
       return {
         ...state,
         tasks: state.tasks.map(task =>
@@ -54,7 +55,6 @@ const taskReducer = (state: TaskState, action: TaskAction): TaskState => {
     }
 
     case 'DELETE_TASK':
-      storageService.deleteTask(action.payload);
       return {
         ...state,
         tasks: state.tasks.filter(task => task.id !== action.payload),
@@ -66,6 +66,12 @@ const taskReducer = (state: TaskState, action: TaskAction): TaskState => {
 
     case 'SET_SELECTED_TASK':
       return { ...state, selectedTask: action.payload };
+
+    case 'SET_LOADING':
+      return { ...state, isLoading: action.payload };
+
+    case 'SET_ERROR':
+      return { ...state, error: action.payload };
 
     default:
       return state;
@@ -87,23 +93,92 @@ const TaskContext = createContext<TaskContextType | undefined>(undefined);
 
 export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [state, dispatch] = useReducer(taskReducer, initialState);
+  const { state: authState } = useAuth();
 
-  // 初始化时加载任务
-  React.useEffect(() => {
-    const tasks = storageService.getTasks();
-    dispatch({ type: 'LOAD_TASKS', payload: tasks });
-  }, []);
+  // 加载任务
+  useEffect(() => {
+    if (authState.isAuthenticated && authState.user) {
+      loadTasks();
+    } else {
+      // 用户未登录时清空任务
+      dispatch({ type: 'LOAD_TASKS', payload: [] });
+    }
+  }, [authState.isAuthenticated, authState.user]);
 
-  const addTask = (task: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>) => {
-    dispatch({ type: 'ADD_TASK', payload: task });
+  const loadTasks = async () => {
+    if (!authState.user) return;
+
+    dispatch({ type: 'SET_LOADING', payload: true });
+    dispatch({ type: 'SET_ERROR', payload: null });
+
+    try {
+      const tasks = await taskService.getTasks(authState.user.id);
+      dispatch({ type: 'LOAD_TASKS', payload: tasks });
+    } catch (error) {
+      dispatch({
+        type: 'SET_ERROR',
+        payload: error instanceof Error ? error.message : '加载任务失败'
+      });
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
   };
 
-  const updateTask = (task: Task) => {
-    dispatch({ type: 'UPDATE_TASK', payload: task });
+  const addTask = async (taskData: Omit<Task, 'id' | 'createdAt' | 'updatedAt'>) => {
+    if (!authState.user) return;
+
+    dispatch({ type: 'SET_LOADING', payload: true });
+    dispatch({ type: 'SET_ERROR', payload: null });
+
+    try {
+      const newTask = await taskService.createTask(taskData);
+      dispatch({ type: 'ADD_TASK', payload: newTask });
+    } catch (error) {
+      dispatch({
+        type: 'SET_ERROR',
+        payload: error instanceof Error ? error.message : '创建任务失败'
+      });
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
   };
 
-  const deleteTask = (taskId: string) => {
-    dispatch({ type: 'DELETE_TASK', payload: taskId });
+  const updateTask = async (task: Task) => {
+    if (!authState.user) return;
+
+    dispatch({ type: 'SET_LOADING', payload: true });
+    dispatch({ type: 'SET_ERROR', payload: null });
+
+    try {
+      const updatedTask = await taskService.updateTask(task.id, task);
+      dispatch({ type: 'UPDATE_TASK', payload: updatedTask });
+    } catch (error) {
+      dispatch({
+        type: 'SET_ERROR',
+        payload: error instanceof Error ? error.message : '更新任务失败'
+      });
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
+  };
+
+  const deleteTask = async (taskId: string) => {
+    if (!authState.user) return;
+
+    dispatch({ type: 'SET_LOADING', payload: true });
+    dispatch({ type: 'SET_ERROR', payload: null });
+
+    try {
+      await taskService.deleteTask(taskId);
+      dispatch({ type: 'DELETE_TASK', payload: taskId });
+    } catch (error) {
+      dispatch({
+        type: 'SET_ERROR',
+        payload: error instanceof Error ? error.message : '删除任务失败'
+      });
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false });
+    }
   };
 
   const setFilter = (filter: TaskFilter) => {
@@ -159,6 +234,42 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     const tomorrow = new Date(today);
     tomorrow.setDate(tomorrow.getDate() + 1);
 
+    if (!authState.user) {
+      return {
+        total: 0,
+        byStatus: {
+          [TaskStatus.TODO]: 0,
+          [TaskStatus.IN_PROGRESS]: 0,
+          [TaskStatus.COMPLETED]: 0,
+          [TaskStatus.CANCELLED]: 0
+        },
+        byPriority: {
+          [TaskPriority.LOW]: 0,
+          [TaskPriority.MEDIUM]: 0,
+          [TaskPriority.HIGH]: 0,
+          [TaskPriority.URGENT]: 0
+        },
+        completedToday: 0,
+        overdueCount: 0,
+        byAssignee: {},
+        myTasks: 0,
+        assignedToMe: 0,
+        watching: 0
+      };
+    }
+
+    const userId = authState.user.id;
+
+    // 按分配用户统计
+    const byAssignee: Record<string, number> = {};
+    tasks.forEach(task => {
+      if (task.assignedTo) {
+        task.assignedTo.forEach(assigneeId => {
+          byAssignee[assigneeId] = (byAssignee[assigneeId] || 0) + 1;
+        });
+      }
+    });
+
     return {
       total: tasks.length,
       byStatus: {
@@ -182,7 +293,12 @@ export const TaskProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
         t.dueDate &&
         t.dueDate < new Date() &&
         t.status !== TaskStatus.COMPLETED
-      ).length
+      ).length,
+      // 多人协作统计
+      byAssignee,
+      myTasks: tasks.filter(t => t.createdBy === userId).length,
+      assignedToMe: tasks.filter(t => t.assignedTo?.includes(userId)).length,
+      watching: tasks.filter(t => t.watchers?.includes(userId)).length
     };
   };
 
